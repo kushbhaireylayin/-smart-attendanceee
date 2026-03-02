@@ -60,10 +60,21 @@ export const findBestMatch = (
   faceDataArray: { userId: string; descriptor: Float32Array }[],
   threshold: number = 0.6
 ): { userId: string | null; distance: number; confidence: number } => {
+  // Filter out invalid data
+  if (!targetDescriptor || faceDataArray.length === 0) {
+    return {
+      userId: null,
+      distance: threshold,
+      confidence: 0
+    };
+  }
+
   let bestMatch: string | null = null;
   let lowestDistance = threshold;
 
   for (const faceData of faceDataArray) {
+    if (!faceData.descriptor) continue;
+    
     const distance = compareFaces(targetDescriptor, faceData.descriptor);
     
     if (distance < lowestDistance) {
@@ -92,7 +103,7 @@ export const arrayToDescriptor = (array: number[]): Float32Array => {
   return new Float32Array(array);
 };
 
-// Draw face detection box on canvas (optional - for debugging)
+// Draw face detection box on canvas (with null checking)
 export const drawFaceBox = async (
   canvas: HTMLCanvasElement,
   video: HTMLVideoElement
@@ -102,15 +113,55 @@ export const drawFaceBox = async (
       .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
       .withFaceLandmarks();
 
-    if (detection) {
-      const displaySize = { width: video.width, height: video.height };
-      faceapi.matchDimensions(canvas, displaySize);
+    // Clear canvas first
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // Only draw if we have a valid detection
+    if (detection && detection.detection && detection.detection.box) {
+      const box = detection.detection.box;
       
-      const resizedDetection = faceapi.resizeResults(detection, displaySize);
-      faceapi.draw.drawDetections(canvas, [resizedDetection]);
-      faceapi.draw.drawFaceLandmarks(canvas, [resizedDetection]);
+      // Check if box has valid values
+      if (box.x !== null && box.y !== null && box.width !== null && box.height !== null) {
+        const displaySize = { width: video.width, height: video.height };
+        faceapi.matchDimensions(canvas, displaySize);
+        
+        const resizedDetection = faceapi.resizeResults(detection, displaySize);
+        faceapi.draw.drawDetections(canvas, [resizedDetection]);
+        faceapi.draw.drawFaceLandmarks(canvas, [resizedDetection]);
+      }
     }
   } catch (error) {
-    // Silently fail for drawing - not critical
+    // Silently fail - don't crash the app
+    console.log('Draw error (non-critical):', error);
   }
+};
+
+// Detect multiple faces from video (for attendance marking)
+export const detectMultipleFaces = async (video: HTMLVideoElement) => {
+  try {
+    const detections = await faceapi
+      .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks()
+      .withFaceDescriptors();
+    
+    return detections;
+  } catch (error) {
+    console.error('❌ Error detecting multiple faces:', error);
+    return [];
+  }
+};
+
+// Check if face is valid (not null)
+export const isValidFaceDetection = (detection: any): boolean => {
+  return detection && 
+         detection.descriptor && 
+         detection.detection && 
+         detection.detection.box &&
+         detection.detection.box.x !== null &&
+         detection.detection.box.y !== null &&
+         detection.detection.box.width !== null &&
+         detection.detection.box.height !== null;
 };

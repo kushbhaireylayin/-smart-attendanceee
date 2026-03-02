@@ -2,12 +2,17 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { PrismaClient } from "@prisma/client";
-import Layout from "@/components/layout/Layout";
+import Link from "next/link";
 import { 
   CalendarIcon, 
   CheckCircleIcon, 
+  BookOpenIcon,
+  AcademicCapIcon,
+  ChartBarIcon,
   UserGroupIcon,
-  ClockIcon 
+  ClockIcon,
+  ArrowTrendingUpIcon,
+  CameraIcon
 } from "@heroicons/react/24/outline";
 
 const prisma = new PrismaClient();
@@ -19,269 +24,406 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  // Fetch today's attendance
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const todayAttendance = await prisma.attendance.findFirst({
-    where: {
-      userId: session.user.id,
-      date: {
-        gte: today,
-        lt: tomorrow,
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    include: {
+      enrollments: {
+        include: {
+          subject: true
+        }
       },
-    },
-  });
-
-  // Fetch total attendance count
-  const totalAttendance = await prisma.attendance.count({
-    where: {
-      userId: session.user.id,
-    },
-  });
-
-  // Fetch recent attendance records
-  const recentAttendance = await prisma.attendance.findMany({
-    where: {
-      userId: session.user.id,
-    },
-    orderBy: {
-      date: "desc",
-    },
-    take: 5,
-  });
-
-  // Format date for member since
-  const memberSince = new Date().toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
+      teachings: {
+        include: {
+          subject: true
+        }
+      },
+      attendances: {
+        include: {
+          subject: true
+        },
+        orderBy: {
+          date: 'desc'
+        },
+        take: 10
+      }
+    }
   });
 
   // Calculate attendance statistics
-  const thisMonth = new Date().getMonth();
-  const thisYear = new Date().getFullYear();
-  
-  const monthlyAttendance = recentAttendance.filter(record => {
-    const recordDate = new Date(record.date);
-    return recordDate.getMonth() === thisMonth && recordDate.getFullYear() === thisYear;
-  }).length;
+  const totalClasses = user?.attendances.length || 0;
+  const presentCount = user?.attendances.filter(a => a.status === "PRESENT").length || 0;
+  const attendancePercentage = totalClasses > 0 ? ((presentCount / totalClasses) * 100).toFixed(1) : 0;
+
+  // Subject-wise attendance
+  const subjects = user?.enrollments.map(e => e.subject) || [];
+  const subjectAttendance = await Promise.all(
+    subjects.map(async (subject) => {
+      const total = await prisma.attendance.count({
+        where: {
+          studentId: session.user.id,
+          subjectId: subject.id,
+        },
+      });
+      
+      const present = await prisma.attendance.count({
+        where: {
+          studentId: session.user.id,
+          subjectId: subject.id,
+          status: "PRESENT",
+        },
+      });
+      
+      const percentage = total > 0 ? (present / total) * 100 : 0;
+      
+      return {
+        ...subject,
+        total,
+        present,
+        percentage,
+        color: percentage >= 75 ? 'green' : percentage >= 60 ? 'yellow' : 'red'
+      };
+    })
+  );
+
+  // For teachers
+  const teachingSubjects = user?.teachings.map(t => t.subject) || [];
+
+  // Get today's date
+  const today = new Date();
+  const formattedDate = today.toLocaleDateString('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
 
   return (
-    <Layout>
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Welcome Section */}
-        <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl p-8 text-white">
-          <h1 className="text-3xl font-bold">Welcome back, {session.user?.name}! 👋</h1>
-          <p className="text-blue-100 mt-2">Here's your attendance summary for today</p>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
+      {/* Modern Header with Glass Effect */}
+      <div className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-10">
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl">
+                <AcademicCapIcon className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  Attendance Dashboard
+                </h1>
+                <p className="text-sm text-gray-500">{formattedDate}</p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-4">
+              <div className="text-right">
+                <p className="text-sm font-medium text-gray-700">{session.user?.name}</p>
+                <p className="text-xs text-gray-500">{session.user?.role}</p>
+              </div>
+              <div className="h-10 w-10 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
+                {session.user?.name?.charAt(0)}
+              </div>
+              {/* Logout Button */}
+              <form action="/api/auth/signout" method="POST">
+                <button
+                  type="submit"
+                  className="ml-4 px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition flex items-center space-x-2"
+                >
+                  <span>Logout</span>
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="container mx-auto px-6 py-8">
+        {/* Welcome Banner */}
+        <div className="mb-8 p-6 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl text-white">
+          <h2 className="text-2xl font-bold mb-2">Welcome back, {session.user?.name}! 👋</h2>
+          <p className="text-blue-100">Here's your attendance summary and updates</p>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {/* Total Attendance Card */}
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition">
-            <div className="flex items-center justify-between">
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition group">
+            <div className="flex justify-between items-start">
               <div>
-                <p className="text-gray-500 text-sm">Total Attendance</p>
-                <p className="text-3xl font-bold text-gray-800 mt-1">{totalAttendance}</p>
-                <p className="text-green-600 text-sm mt-2">+{monthlyAttendance} this month</p>
+                <p className="text-sm text-gray-500 mb-1">Total Attendance</p>
+                <p className="text-3xl font-bold text-gray-800">{totalClasses}</p>
+                <p className="text-xs text-gray-400 mt-2">All time</p>
               </div>
-              <div className="p-3 bg-blue-100 rounded-lg">
+              <div className="p-3 bg-blue-100 rounded-lg group-hover:scale-110 transition">
                 <CalendarIcon className="h-6 w-6 text-blue-600" />
               </div>
             </div>
           </div>
 
-          {/* Today's Status Card */}
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition">
-            <div className="flex items-center justify-between">
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition group">
+            <div className="flex justify-between items-start">
               <div>
-                <p className="text-gray-500 text-sm">Today's Status</p>
-                <div className="flex items-center space-x-2 mt-1">
-                  {todayAttendance ? (
-                    <>
-                      <CheckCircleIcon className="h-6 w-6 text-green-500" />
-                      <p className="text-2xl font-bold text-green-600">Present</p>
-                    </>
-                  ) : (
-                    <>
-                      <ClockIcon className="h-6 w-6 text-yellow-500" />
-                      <p className="text-2xl font-bold text-yellow-600">Not Marked</p>
-                    </>
-                  )}
-                </div>
-                {todayAttendance && (
-                  <p className="text-gray-500 text-sm mt-2">
-                    at {new Date(todayAttendance.date).toLocaleTimeString()}
-                  </p>
-                )}
+                <p className="text-sm text-gray-500 mb-1">Present Days</p>
+                <p className="text-3xl font-bold text-green-600">{presentCount}</p>
+                <p className="text-xs text-gray-400 mt-2">{attendancePercentage}% of classes</p>
               </div>
-              <div className={`p-3 ${todayAttendance ? 'bg-green-100' : 'bg-yellow-100'} rounded-lg`}>
-                {todayAttendance ? (
-                  <CheckCircleIcon className="h-6 w-6 text-green-600" />
-                ) : (
-                  <ClockIcon className="h-6 w-6 text-yellow-600" />
-                )}
+              <div className="p-3 bg-green-100 rounded-lg group-hover:scale-110 transition">
+                <CheckCircleIcon className="h-6 w-6 text-green-600" />
               </div>
             </div>
           </div>
 
-          {/* Member Since Card */}
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition">
-            <div className="flex items-center justify-between">
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition group">
+            <div className="flex justify-between items-start">
               <div>
-                <p className="text-gray-500 text-sm">Member Since</p>
-                <p className="text-xl font-bold text-gray-800 mt-1">{memberSince}</p>
-                <p className="text-gray-500 text-sm mt-2">{session.user?.role}</p>
+                <p className="text-sm text-gray-500 mb-1">Attendance Rate</p>
+                <p className="text-3xl font-bold text-purple-600">{attendancePercentage}%</p>
+                <p className="text-xs text-gray-400 mt-2">Overall</p>
               </div>
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <UserGroupIcon className="h-6 w-6 text-purple-600" />
+              <div className="p-3 bg-purple-100 rounded-lg group-hover:scale-110 transition">
+                <ArrowTrendingUpIcon className="h-6 w-6 text-purple-600" />
               </div>
             </div>
           </div>
 
-          {/* Quick Action Card */}
-          <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl shadow-lg p-6 border border-gray-100">
-            <h3 className="font-semibold text-gray-800">Quick Action</h3>
-            <p className="text-sm text-gray-600 mt-1">Mark your attendance now</p>
-            <a 
-              href="/attendance"
-              className="inline-block mt-4 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition"
-            >
-              Go to Camera →
-            </a>
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 hover:shadow-xl transition group">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Subjects</p>
+                <p className="text-3xl font-bold text-orange-600">{subjects.length}</p>
+                <p className="text-xs text-gray-400 mt-2">Enrolled</p>
+              </div>
+              <div className="p-3 bg-orange-100 rounded-lg group-hover:scale-110 transition">
+                <BookOpenIcon className="h-6 w-6 text-orange-600" />
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Today's Status Message */}
-        {todayAttendance && (
-          <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-            <p className="text-green-700 flex items-center">
-              <CheckCircleIcon className="h-5 w-5 mr-2" />
-              ✓ You've already marked attendance today at {new Date(todayAttendance.date).toLocaleTimeString()}
-            </p>
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column - Subject Cards */}
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-lg font-semibold text-gray-800">Subject-wise Attendance</h2>
+                <Link href="/analytics" className="text-sm text-blue-600 hover:text-blue-800 flex items-center">
+                  View Analytics
+                  <ChartBarIcon className="h-4 w-4 ml-1" />
+                </Link>
+              </div>
+              
+              <div className="space-y-6">
+                {subjectAttendance.map((subject) => (
+                  <div key={subject.id} className="group">
+                    <div className="flex justify-between items-center mb-2">
+                      <div>
+                        <h3 className="font-medium text-gray-800">{subject.name}</h3>
+                        <p className="text-xs text-gray-500">{subject.code} • Semester {subject.semester}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-semibold text-gray-800">{subject.percentage.toFixed(1)}%</p>
+                        <p className="text-xs text-gray-500">{subject.present}/{subject.total} classes</p>
+                      </div>
+                    </div>
+                    <div className="relative pt-1">
+                      <div className="overflow-hidden h-2 text-xs flex rounded-full bg-gray-200">
+                        <div
+                          style={{ width: `${subject.percentage}%` }}
+                          className={`shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center ${
+                            subject.color === 'green' ? 'bg-green-500' :
+                            subject.color === 'yellow' ? 'bg-yellow-500' : 'bg-red-500'
+                          }`}
+                        ></div>
+                      </div>
+                      {subject.percentage < 75 && (
+                        <p className="text-xs text-red-500 mt-1 flex items-center">
+                          <span className="mr-1">⚠️</span> Below 75% required
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Recent Activity */}
+          <div className="space-y-6">
+            {/* Today's Status Card */}
+            <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">Today's Status</h2>
+              {user?.attendances && user.attendances.length > 0 && 
+               new Date(user.attendances[0].date).toDateString() === new Date().toDateString() ? (
+                <div className="p-4 bg-green-50 rounded-xl">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-green-100 rounded-full">
+                      <CheckCircleIcon className="h-5 w-5 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-green-700">Present</p>
+                      <p className="text-xs text-green-600">
+                        {new Date(user.attendances[0].date).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-yellow-50 rounded-xl">
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-yellow-100 rounded-full">
+                      <ClockIcon className="h-5 w-5 text-yellow-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-yellow-700">Not Marked Yet</p>
+                      <p className="text-xs text-yellow-600">Attendance pending</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Actions Card */}
+            <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">Quick Actions</h2>
+              <div className="space-y-3">
+                <Link
+                  href="/attendance"
+                  className="block p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl hover:shadow-md transition group"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-blue-100 rounded-lg group-hover:scale-110 transition">
+                      <CameraIcon className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-800">Mark Attendance</p>
+                      <p className="text-xs text-gray-500">Use face recognition</p>
+                    </div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/analytics"
+                  className="block p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl hover:shadow-md transition group"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className="p-2 bg-purple-100 rounded-lg group-hover:scale-110 transition">
+                      <ChartBarIcon className="h-5 w-5 text-purple-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-800">View Analytics</p>
+                      <p className="text-xs text-gray-500">Check your progress</p>
+                    </div>
+                  </div>
+                </Link>
+              </div>
+            </div>
+
+            {/* Teacher Section */}
+            {session.user?.role === "TEACHER" && teachingSubjects.length > 0 && (
+              <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">Your Subjects</h2>
+                <div className="space-y-3">
+                  {teachingSubjects.map((subject) => (
+                    <Link
+                      key={subject.id}
+                      href={`/teacher/attendance/${subject.id}`}
+                      className="block p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
+                    >
+                      <p className="font-medium text-gray-800">{subject.name}</p>
+                      <p className="text-xs text-gray-500">{subject.code} • Semester {subject.semester}</p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Admin Section */}
+        {session.user?.role === "ADMIN" && (
+          <div className="mt-8">
+            <h2 className="text-xl font-semibold mb-4 text-gray-800">Admin Controls</h2>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <Link
+                href="/admin/subjects"
+                className="p-6 bg-white rounded-xl shadow-lg hover:shadow-xl transition border-l-4 border-blue-500"
+              >
+                <div className="text-3xl mb-2">📚</div>
+                <h3 className="font-semibold text-lg">Subjects</h3>
+                <p className="text-sm text-gray-600 mt-1">Add and manage subjects</p>
+              </Link>
+              
+              <Link
+                href="/admin/teachers"
+                className="p-6 bg-white rounded-xl shadow-lg hover:shadow-xl transition border-l-4 border-green-500"
+              >
+                <div className="text-3xl mb-2">👨‍🏫</div>
+                <h3 className="font-semibold text-lg">Teachers</h3>
+                <p className="text-sm text-gray-600 mt-1">Assign subjects to teachers</p>
+              </Link>
+              
+              <Link
+                href="/admin/students"
+                className="p-6 bg-white rounded-xl shadow-lg hover:shadow-xl transition border-l-4 border-purple-500"
+              >
+                <div className="text-3xl mb-2">👥</div>
+                <h3 className="font-semibold text-lg">Students</h3>
+                <p className="text-sm text-gray-600 mt-1">Manage and delete students</p>
+              </Link>
+              
+              <Link
+                href="/admin/analytics"
+                className="p-6 bg-white rounded-xl shadow-lg hover:shadow-xl transition border-l-4 border-orange-500"
+              >
+                <div className="text-3xl mb-2">📊</div>
+                <h3 className="font-semibold text-lg">Analytics</h3>
+                <p className="text-sm text-gray-600 mt-1">View all attendance data</p>
+              </Link>
+            </div>
           </div>
         )}
 
-        {/* User Information Card */}
-        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">Your Information</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm text-gray-500">Full Name</p>
-                <p className="font-medium text-gray-800">{session.user?.name}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Role</p>
-                <p className="font-medium text-gray-800">{session.user?.role}</p>
-              </div>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm text-gray-500">Email Address</p>
-                <p className="font-medium text-gray-800">{session.user?.email}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">User ID</p>
-                <p className="font-medium text-gray-800 text-sm truncate">{session.user?.id}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Recent Attendance History */}
-        {recentAttendance.length > 0 ? (
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
-            <h2 className="text-xl font-semibold mb-4 text-gray-800">Recent Attendance History</h2>
+        {/* Recent Attendance Table */}
+        {user?.attendances && user.attendances.length > 0 && (
+          <div className="mt-8 bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">Recent Attendance History</h2>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Date</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Time</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Status</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-600">Confidence</th>
+                    <th className="p-3 text-left text-sm font-medium text-gray-600">Date</th>
+                    <th className="p-3 text-left text-sm font-medium text-gray-600">Subject</th>
+                    <th className="p-3 text-left text-sm font-medium text-gray-600">Period</th>
+                    <th className="p-3 text-left text-sm font-medium text-gray-600">Status</th>
+                    <th className="p-3 text-left text-sm font-medium text-gray-600">Confidence</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {recentAttendance.map((record) => (
-                    <tr key={record.id} className="hover:bg-gray-50">
-                      <td className="py-3 px-4 text-gray-700">
-                        {new Date(record.date).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric'
-                        })}
+                <tbody className="divide-y divide-gray-200">
+                  {user.attendances.slice(0, 5).map((att) => (
+                    <tr key={att.id} className="hover:bg-gray-50">
+                      <td className="p-3 text-sm text-gray-700">
+                        {new Date(att.date).toLocaleDateString()}
                       </td>
-                      <td className="py-3 px-4 text-gray-700">
-                        {new Date(record.date).toLocaleTimeString('en-US', {
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
-                          {record.status}
+                      <td className="p-3 text-sm text-gray-700">{att.subject?.name}</td>
+                      <td className="p-3 text-sm text-gray-700">{att.period}</td>
+                      <td className="p-3 text-sm">
+                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+                          {att.status}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-gray-700">
-                        {record.confidence 
-                          ? `${Math.round(record.confidence * 100)}%` 
-                          : "N/A"}
+                      <td className="p-3 text-sm text-gray-700">
+                        {att.confidence ? `${Math.round(att.confidence * 100)}%` : 'N/A'}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            
-            {/* View All Link */}
-            <div className="mt-4 text-right">
-              <a 
-                href="/analytics" 
-                className="text-sm text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center"
-              >
-                View Detailed Analytics
-                <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </a>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl shadow-lg p-12 text-center border border-gray-100">
-            <CalendarIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500">No attendance records yet.</p>
-            <a 
-              href="/attendance" 
-              className="inline-block mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-            >
-              Mark Your First Attendance
-            </a>
           </div>
         )}
-
-        {/* Quick Actions Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <a 
-            href="/attendance" 
-            className="p-4 bg-white rounded-xl shadow-lg hover:shadow-xl transition border-l-4 border-blue-500"
-          >
-            <h3 className="font-semibold text-gray-800">📸 Mark Attendance</h3>
-            <p className="text-sm text-gray-600 mt-1">Use face recognition to mark today's attendance</p>
-          </a>
-          <a 
-            href="/register" 
-            className="p-4 bg-white rounded-xl shadow-lg hover:shadow-xl transition border-l-4 border-green-500"
-          >
-            <h3 className="font-semibold text-gray-800">👤 Register New Student</h3>
-            <p className="text-sm text-gray-600 mt-1">Add a new student with face capture</p>
-          </a>
-        </div>
       </div>
-    </Layout>
+    </div>
   );
 }

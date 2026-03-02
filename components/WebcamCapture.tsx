@@ -31,26 +31,36 @@ export default function WebcamCapture({ onFaceDetected, onError }: WebcamCapture
   // Draw face box on canvas for visual feedback
   useEffect(() => {
     let animationId: number;
+    let isDrawing = false;
     
     const drawBox = async () => {
-      if (!webcamRef.current || !canvasRef.current || !isModelLoaded) return;
+      if (isDrawing) return;
+      isDrawing = true;
       
-      const video = webcamRef.current.video;
-      if (!video || video.readyState !== 4) return;
-      
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      
-      // Clear previous drawings
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Draw face box if not capturing
-      if (!isDetecting && !capturedImage) {
-        await drawFaceBox(canvas, video);
+      try {
+        if (!webcamRef.current || !canvasRef.current || !isModelLoaded) return;
+        
+        const video = webcamRef.current.video;
+        if (!video || video.readyState !== 4) return;
+        
+        const canvas = canvasRef.current;
+        
+        // Draw face box if not capturing
+        if (!isDetecting && !capturedImage) {
+          await drawFaceBox(canvas, video);
+        } else {
+          // Clear canvas when not detecting
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        }
+      } catch (error) {
+        // Ignore drawing errors
+      } finally {
+        isDrawing = false;
+        animationId = requestAnimationFrame(drawBox);
       }
-      
-      animationId = requestAnimationFrame(drawBox);
     };
     
     drawBox();

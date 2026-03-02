@@ -14,25 +14,36 @@ interface Student {
   faceDescriptor: number[];
 }
 
+interface Subject {
+  id: string;
+  code: string;
+  name: string;
+}
+
 interface AttendanceRecord {
   id: string;
   date: string;
   status: string;
   confidence: number;
+  subjectId: string;
+  period: number;
 }
 
 export default function AttendancePage() {
   const router = useRouter();
   const [students, setStudents] = useState<Student[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [selectedSubject, setSelectedSubject] = useState("");
+  const [period, setPeriod] = useState(1);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
   const [recognizedStudent, setRecognizedStudent] = useState<Student | null>(null);
-  const [todayAttendance, setTodayAttendance] = useState<AttendanceRecord | null>(null);
+  const [todayAttendance, setTodayAttendance] = useState<AttendanceRecord[]>([]);
   const [checkingStatus, setCheckingStatus] = useState(true);
 
-  // Fetch all students with face data on component mount
   useEffect(() => {
     fetchStudents();
+    fetchSubjects();
     checkTodayAttendance();
   }, []);
 
@@ -41,38 +52,51 @@ export default function AttendancePage() {
       const response = await fetch("/api/students");
       if (!response.ok) throw new Error("Failed to fetch students");
       const data = await response.json();
-      setStudents(data);
+      setStudents(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Error fetching students:", error);
-      setMessage({
-        type: 'error',
-        text: "Failed to load student data"
-      });
+    }
+  };
+
+  const fetchSubjects = async () => {
+    try {
+      const response = await fetch("/api/subjects");
+      if (!response.ok) throw new Error("Failed to fetch subjects");
+      const data = await response.json();
+      setSubjects(Array.isArray(data) ? data : []);
+      if (Array.isArray(data) && data.length > 0) {
+        setSelectedSubject(data[0].id);
+      }
+    } catch (error) {
+      console.error("Error fetching subjects:", error);
     }
   };
 
   const checkTodayAttendance = async () => {
     try {
-      // Get today's date in YYYY-MM-DD format
       const today = new Date().toISOString().split('T')[0];
-      
       const response = await fetch(`/api/attendance?date=${today}`);
-      if (!response.ok) throw new Error("Failed to check attendance");
-      
-      const data = await response.json();
-      setCheckingStatus(false);
+      if (response.ok) {
+        const data = await response.json();
+        // Handle both array and paginated response
+        const attendanceList = Array.isArray(data) ? data : data?.attendances || [];
+        setTodayAttendance(attendanceList);
+      }
     } catch (error) {
       console.error("Error checking attendance:", error);
+    } finally {
       setCheckingStatus(false);
     }
   };
 
   const handleFaceDetected = async (descriptor: Float32Array, imageSrc: string) => {
     if (students.length === 0) {
-      setMessage({
-        type: 'error',
-        text: "No registered students found. Please register first."
-      });
+      setMessage({ type: 'error', text: "No registered students found. Please register first." });
+      return;
+    }
+
+    if (!selectedSubject) {
+      setMessage({ type: 'error', text: "Please select a subject" });
       return;
     }
 
@@ -81,28 +105,40 @@ export default function AttendancePage() {
     setRecognizedStudent(null);
 
     try {
-      // Prepare face data array for comparison
-      const faceDataArray = students.map(student => ({
-        userId: student.id,
-        descriptor: arrayToDescriptor(student.faceDescriptor)
-      }));
+      const faceDataArray = students
+        .map(student => ({
+          userId: student.id,
+          descriptor: student.faceDescriptor ? arrayToDescriptor(student.faceDescriptor) : null
+        }))
+        .filter(s => s.descriptor !== null) as { userId: string; descriptor: Float32Array }[];
 
-      // Find best match among registered students
       const match = findBestMatch(descriptor, faceDataArray, 0.6);
 
       if (match.userId) {
         const matchedStudent = students.find(s => s.id === match.userId);
         
         if (matchedStudent) {
-          // Mark attendance
+          const alreadyMarked = todayAttendance.some(a => a.subjectId === selectedSubject);
+
+          if (alreadyMarked) {
+            setMessage({
+              type: 'info',
+              text: `You have already marked attendance for ${subjects.find(s => s.id === selectedSubject)?.name} today.`
+            });
+            setRecognizedStudent(matchedStudent);
+            setLoading(false);
+            return;
+          }
+
           const response = await fetch("/api/attendance", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               studentId: matchedStudent.id,
+              subjectId: selectedSubject,
+              period,
               confidence: match.confidence,
+              status: "PRESENT"
             }),
           });
 
@@ -110,35 +146,32 @@ export default function AttendancePage() {
 
           if (response.ok) {
             setRecognizedStudent(matchedStudent);
-            setTodayAttendance(data.attendance);
             setMessage({
               type: 'success',
-              text: `✓ Attendance marked for ${matchedStudent.name}!`
+              text: `✓ Attendance marked for ${matchedStudent.name} in ${subjects.find(s => s.id === selectedSubject)?.name}!`
             });
+            checkTodayAttendance();
           } else {
-            if (response.status === 400 && data.error.includes("already marked")) {
-              setMessage({
-                type: 'info',
-                text: "You have already marked your attendance today."
-              });
-              setRecognizedStudent(matchedStudent);
+            if (response.status === 400) {
+              if (data.error?.includes("already marked")) {
+                setMessage({
+                  type: 'info',
+                  text: "You have already marked your attendance for this subject today."
+                });
+              } else {
+                setMessage({ type: 'error', text: data.error || "Failed to mark attendance" });
+              }
             } else {
-              throw new Error(data.error || "Failed to mark attendance");
+              setMessage({ type: 'error', text: "Server error. Please try again." });
             }
           }
         }
       } else {
-        setMessage({
-          type: 'error',
-          text: "Face not recognized. Please ensure you are registered and try again."
-        });
+        setMessage({ type: 'error', text: "Face not recognized. Please try again." });
       }
     } catch (error: any) {
       console.error("Attendance error:", error);
-      setMessage({
-        type: 'error',
-        text: error.message || "Error processing attendance"
-      });
+      setMessage({ type: 'error', text: error.message || "Error processing attendance" });
     } finally {
       setLoading(false);
     }
@@ -160,7 +193,6 @@ export default function AttendancePage() {
   return (
     <Layout>
       <div className="max-w-3xl mx-auto">
-        {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-block p-3 bg-blue-100 rounded-full mb-4">
             <CameraIcon className="h-8 w-8 text-blue-600" />
@@ -168,32 +200,56 @@ export default function AttendancePage() {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Mark Your Attendance
           </h1>
-          <p className="text-gray-600 mt-2">
-            Look at the camera to automatically mark your attendance
-          </p>
+          <p className="text-gray-600 mt-2">Look at the camera to automatically mark your attendance</p>
         </div>
 
-        {/* Statistics Cards */}
+        <div className="bg-white rounded-xl shadow-lg p-6 mb-6 border border-gray-100">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Select Subject</label>
+              <select
+                value={selectedSubject}
+                onChange={(e) => setSelectedSubject(e.target.value)}
+                className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Choose a subject...</option>
+                {subjects.map((subject) => (
+                  <option key={subject.id} value={subject.id}>
+                    {subject.code} - {subject.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Period</label>
+              <select
+                value={period}
+                onChange={(e) => setPeriod(parseInt(e.target.value))}
+                className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-500"
+              >
+                {[1, 2, 3, 4, 5, 6, 7, 8].map(p => (
+                  <option key={p} value={p}>Period {p}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-xl text-center">
             <div className="text-2xl font-bold text-blue-600">{students.length}</div>
             <div className="text-sm text-gray-600">Registered Students</div>
           </div>
           <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-xl text-center">
-            <div className="text-2xl font-bold text-purple-600">
-              {new Date().toLocaleDateString()}
-            </div>
+            <div className="text-2xl font-bold text-purple-600">{new Date().toLocaleDateString()}</div>
             <div className="text-sm text-gray-600">Today's Date</div>
           </div>
           <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-xl text-center">
-            <div className="text-2xl font-bold text-green-600">
-              {todayAttendance ? '✓' : '—'}
-            </div>
-            <div className="text-sm text-gray-600">Your Status Today</div>
+            <div className="text-2xl font-bold text-green-600">{todayAttendance.length}</div>
+            <div className="text-sm text-gray-600">Marked Today</div>
           </div>
         </div>
 
-        {/* Message Display */}
         {message && (
           <div className={`mb-6 p-4 rounded-xl flex items-center ${
             message.type === 'success' ? 'bg-green-50 border border-green-200' :
@@ -212,7 +268,6 @@ export default function AttendancePage() {
           </div>
         )}
 
-        {/* Recognized Student Info */}
         {recognizedStudent && (
           <div className="mb-6 p-4 bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl border border-gray-200">
             <h3 className="font-semibold text-gray-700 mb-3">🎯 Recognized Student:</h3>
@@ -225,19 +280,10 @@ export default function AttendancePage() {
                 <p className="text-xs text-gray-500">Email</p>
                 <p className="font-medium text-gray-800">{recognizedStudent.email}</p>
               </div>
-              {todayAttendance && (
-                <div className="col-span-2">
-                  <p className="text-xs text-gray-500">Time</p>
-                  <p className="font-medium text-gray-800">
-                    {new Date(todayAttendance.date).toLocaleTimeString()}
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}
 
-        {/* Webcam Capture */}
         <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
           <WebcamCapture
             onFaceDetected={handleFaceDetected}
@@ -245,7 +291,6 @@ export default function AttendancePage() {
           />
         </div>
 
-        {/* Loading State */}
         {loading && (
           <div className="mt-4 text-center text-gray-600">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
@@ -253,37 +298,22 @@ export default function AttendancePage() {
           </div>
         )}
 
-        {/* Instructions */}
-        <div className="mt-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
-          <h3 className="font-semibold text-gray-700 mb-2 flex items-center">
-            <span className="bg-blue-100 text-blue-600 rounded-full w-5 h-5 inline-flex items-center justify-center text-xs mr-2">i</span>
-            Instructions:
-          </h3>
-          <ul className="text-sm text-gray-600 space-y-2 list-none">
-            <li className="flex items-center">
-              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-2"></span>
-              Ensure good lighting on your face
-            </li>
-            <li className="flex items-center">
-              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-2"></span>
-              Remove glasses or anything covering your face if needed
-            </li>
-            <li className="flex items-center">
-              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-2"></span>
-              Look directly at the camera
-            </li>
-            <li className="flex items-center">
-              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-2"></span>
-              Wait for the system to recognize you
-            </li>
-            <li className="flex items-center">
-              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full mr-2"></span>
-              You'll see a confirmation once attendance is marked
-            </li>
-          </ul>
-        </div>
+        {todayAttendance.length > 0 && (
+          <div className="mt-6 p-4 bg-green-50 rounded-xl border border-green-200">
+            <h3 className="font-semibold text-green-700 mb-2">✓ Today's Marked Attendance:</h3>
+            <ul className="space-y-1">
+              {todayAttendance.map((att) => {
+                const subject = subjects.find(s => s.id === att.subjectId);
+                return (
+                  <li key={att.id} className="text-sm text-green-600">
+                    {subject?.name} - Period {att.period} at {new Date(att.date).toLocaleTimeString()}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
-        {/* Navigation */}
         <div className="mt-6 text-center">
           <button
             onClick={() => router.push("/dashboard")}
