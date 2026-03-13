@@ -103,39 +103,19 @@ export const arrayToDescriptor = (array: number[]): Float32Array => {
   return new Float32Array(array);
 };
 
-// Draw face detection box on canvas (with null checking)
+// Draw face detection box on canvas (simplified to avoid errors)
 export const drawFaceBox = async (
   canvas: HTMLCanvasElement,
   video: HTMLVideoElement
 ) => {
   try {
-    const detection = await faceapi
-      .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks();
-
-    // Clear canvas first
+    // Just clear the canvas - don't draw to avoid null box errors
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
-
-    // Only draw if we have a valid detection
-    if (detection && detection.detection && detection.detection.box) {
-      const box = detection.detection.box;
-      
-      // Check if box has valid values
-      if (box.x !== null && box.y !== null && box.width !== null && box.height !== null) {
-        const displaySize = { width: video.width, height: video.height };
-        faceapi.matchDimensions(canvas, displaySize);
-        
-        const resizedDetection = faceapi.resizeResults(detection, displaySize);
-        faceapi.draw.drawDetections(canvas, [resizedDetection]);
-        faceapi.draw.drawFaceLandmarks(canvas, [resizedDetection]);
-      }
-    }
   } catch (error) {
-    // Silently fail - don't crash the app
-    console.log('Draw error (non-critical):', error);
+    // Silently fail - this is non-critical
   }
 };
 

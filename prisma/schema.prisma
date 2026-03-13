@@ -14,13 +14,14 @@ model User {
   email         String       @unique
   password      String
   role          String       @default("STUDENT") // ADMIN, HOD, TEACHER, STUDENT
-  rollNumber    String?      // For students (e.g., "BCA2025001")
+  rollNumber    String?      @unique // University Register Number
   department    String?      // e.g., "Computer Science", "BCA", "BBA"
   semester      Int?         // 1-8 for students
   faceData      FaceData?
   enrollments   Enrollment[]
   teachings     Teaching[]
   attendances   Attendance[]
+  sickLeaves    SickLeave[]  // For sick leave applications
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 }
@@ -85,4 +86,18 @@ model Attendance {
   markedBy      String   // Teacher ID who marked attendance
   confidence    Float?   // Face recognition confidence (0-1)
   createdAt     DateTime @default(now())
+}
+
+// Sick Leave Model - For students to apply for leave
+model SickLeave {
+  id          String   @id @default(cuid())
+  studentId   String
+  student     User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  fromDate    DateTime // Start of leave
+  toDate      DateTime // End of leave
+  reason      String   // Reason for leave (no @db.Text for SQLite)
+  documentUrl String?  // Path to uploaded file
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

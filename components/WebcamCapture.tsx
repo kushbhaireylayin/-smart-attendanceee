@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import Webcam from "react-webcam";
-import { loadModels, detectFace, drawFaceBox } from "@/lib/face-recognition/faceApi";
+import * as faceapi from 'face-api.js';
 
 interface WebcamCaptureProps {
   onFaceDetected: (descriptor: Float32Array, imageSrc: string) => void;
@@ -19,56 +19,44 @@ export default function WebcamCapture({ onFaceDetected, onError }: WebcamCapture
   // Load models on component mount
   useEffect(() => {
     const loadFaceModels = async () => {
-      const loaded = await loadModels();
-      setIsModelLoaded(loaded);
-      if (!loaded && onError) {
-        onError("Failed to load face recognition models");
+      try {
+        const MODEL_URL = '/models';
+        
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+        
+        console.log('✅ Face recognition models loaded successfully');
+        setIsModelLoaded(true);
+      } catch (error) {
+        console.error('❌ Error loading models:', error);
+        setIsModelLoaded(false);
+        if (onError) onError("Failed to load face recognition models");
       }
     };
     loadFaceModels();
   }, [onError]);
 
-  // Draw face box on canvas for visual feedback
+  // Clear canvas periodically (no drawing to avoid errors)
   useEffect(() => {
     let animationId: number;
-    let isDrawing = false;
     
-    const drawBox = async () => {
-      if (isDrawing) return;
-      isDrawing = true;
-      
-      try {
-        if (!webcamRef.current || !canvasRef.current || !isModelLoaded) return;
-        
-        const video = webcamRef.current.video;
-        if (!video || video.readyState !== 4) return;
-        
-        const canvas = canvasRef.current;
-        
-        // Draw face box if not capturing
-        if (!isDetecting && !capturedImage) {
-          await drawFaceBox(canvas, video);
-        } else {
-          // Clear canvas when not detecting
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-          }
+    const clearCanvas = () => {
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
         }
-      } catch (error) {
-        // Ignore drawing errors
-      } finally {
-        isDrawing = false;
-        animationId = requestAnimationFrame(drawBox);
       }
+      animationId = requestAnimationFrame(clearCanvas);
     };
     
-    drawBox();
+    clearCanvas();
     
     return () => {
       if (animationId) cancelAnimationFrame(animationId);
     };
-  }, [isModelLoaded, isDetecting, capturedImage]);
+  }, []);
 
   const capture = useCallback(async () => {
     if (!webcamRef.current || !isModelLoaded || isDetecting) return;
@@ -86,7 +74,10 @@ export default function WebcamCapture({ onFaceDetected, onError }: WebcamCapture
       }
 
       // Detect face and get descriptor
-      const detection = await detectFace(video);
+      const detection = await faceapi
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
       
       if (detection && detection.descriptor) {
         setCapturedImage(imageSrc);
